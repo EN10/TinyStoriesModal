@@ -43,6 +43,11 @@ modal volume create tinystories-volume
 modal run tinystories.py
 ```
 
+Or run with --detach for long-running training sessions that continue after disconnection:
+```
+modal run --detach tinystories.py
+```
+
 Or run inference:
 ```
 modal run tinystories.py inference "Once upon a time"
