@@ -9,10 +9,12 @@ volume = modal.Volume.from_name("tinystories-volume")
 @app.function(volumes={"/data": volume})
 def clean_duplicate_files(directory="/data"):
     """
-    Clean up duplicate files in the specified directory.
-    Specifically handles the tok105.* and data.tar.gz files.
+    Clean up duplicate files and unnecessary txt files in the specified directory.
+    Handles tok105.* and data.tar.gz files, and removes large txt files.
     """
-    # List of base filenames to check for duplicates
+    files_removed = 0
+    
+    # Part 1: Clean up duplicates
     base_files = [
         "tok105.model",
         "tok105.vocab",
@@ -20,20 +22,14 @@ def clean_duplicate_files(directory="/data"):
         "data.tar.gz"
     ]
     
-    files_removed = 0
-    
     for base_file in base_files:
-        # Find all files that start with the base filename
         matching_files = [f for f in os.listdir(directory) 
                          if f.startswith(base_file.replace('.', '.'))]
         
-        # If there are duplicates (files with .1, .2, etc. appended)
         if len(matching_files) > 1:
-            # Sort files to keep the original and remove duplicates
             matching_files.sort()
             print(f"\nFound duplicates for {base_file}:")
             print(f"  Keeping: {matching_files[0]}")
-            # Keep the first file (original) and remove others
             for duplicate in matching_files[1:]:
                 file_path = os.path.join(directory, duplicate)
                 try:
@@ -43,8 +39,26 @@ def clean_duplicate_files(directory="/data"):
                 except Exception as e:
                     print(f"  Error removing {duplicate}: {str(e)}")
     
+    # Part 2: Clean up txt files
+    txt_files_to_remove = [
+        "train.txt",
+        "val.txt",
+        "test.txt"
+    ]
+    
+    print("\nChecking for txt files to remove:")
+    for txt_file in txt_files_to_remove:
+        file_path = os.path.join(directory, txt_file)
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                files_removed += 1
+                print(f"  Removed: {txt_file}")
+            except Exception as e:
+                print(f"  Error removing {txt_file}: {str(e)}")
+    
     if files_removed == 0:
-        print("\nNo duplicate files found.")
+        print("\nNo files found to remove.")
     else:
         print(f"\nTotal files removed: {files_removed}")
     
