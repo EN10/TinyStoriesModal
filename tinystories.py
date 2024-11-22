@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import os
+import time
+from datetime import datetime
 
 # Update Modal stub to App
 app = modal.App("tinystories-training")
@@ -83,23 +85,110 @@ class GPTLanguageModel(nn.Module):
 
 def download_data():
     os.makedirs("/data", exist_ok=True)
-    files = ["tok105.model", "tok105.vocab", "tok105.tar.gz"]
+    
+    # Check what files we already have
+    existing_files = set(os.listdir("/data"))
+    
+    # Download and extract training data first
+    if "data.tar.gz" not in existing_files:
+        print("Downloading training data...")
+        data_url = "https://huggingface.co/datasets/enio/TinyStories/resolve/main/tok105/data.tar.gz"
+        os.system(f"cd /data && wget {data_url}")
+    
+    if "train.txt" not in existing_files or "val.txt" not in existing_files:
+        print("Extracting training data...")
+        print("  - Extracting train.txt...")
+        print("  - Extracting val.txt...")
+        os.system("cd /data && tar -xvzf data.tar.gz")
+        # Verify extraction
+        if not os.path.exists("/data/train.txt") or not os.path.exists("/data/val.txt"):
+            raise RuntimeError("Failed to extract training data files")
+    
+    # Download tokenizer files if needed
+    tokenizer_files = ["tok105.model", "tok105.vocab", "tok105.tar.gz"]
     base_url = "https://huggingface.co/datasets/enio/TinyStories/resolve/main/tok105/"
     
-    for file in files:
-        os.system(f"cd /data && wget {base_url}{file}")
-    os.system("cd /data && tar -xf tok105.tar.gz")
+    for file in tokenizer_files:
+        if file not in existing_files:
+            print(f"Downloading {file}...")
+            os.system(f"cd /data && wget {base_url}{file}")
+            if not os.path.exists(f"/data/{file}"):
+                raise RuntimeError(f"Failed to download {file}")
+    
+    # Extract tokenizer files only if necessary files don't exist
+    if not all(f in existing_files for f in ["tok105.model", "tok105.vocab"]):
+        print("Extracting tokenizer files...")
+        print("  - Extracting tok105.model...")
+        print("  - Extracting tok105.vocab...")
+        os.system("cd /data && tar -xvzf tok105.tar.gz")
+        if not os.path.exists("/data/tok105.model"):
+            raise RuntimeError("Failed to extract tokenizer files")
+    else:
+        print("Tokenizer files already extracted, skipping extraction.")
+    
+    # Check if processed data files exist
+    if 'train.pt' in existing_files and 'val.pt' in existing_files:
+        print("Found existing processed data files, skipping data preparation.")
+        return
+    
+    # Process and save the data
+    print("Processing training data...")
+    import sentencepiece as spm
+    sp = spm.SentencePieceProcessor()
+    sp.load('/data/tok105.model')
+    
+    # Read and tokenize the text files
+    try:
+        with open('/data/train.txt', 'r') as f:
+            train_text = f.read()
+        with open('/data/val.txt', 'r') as f:
+            val_text = f.read()
+    except FileNotFoundError as e:
+        raise RuntimeError(f"Could not read training files: {e}")
+            
+    # Convert to tensors and save
+    train_data = torch.tensor(sp.encode(train_text), dtype=torch.long)
+    val_data = torch.tensor(sp.encode(val_text), dtype=torch.long)
+    
+    torch.save(train_data, '/data/train.pt')
+    torch.save(val_data, '/data/val.pt')
+    
+    print(f"Saved processed data: train ({len(train_data):,} tokens), val ({len(val_data):,} tokens)")
 
 @app.function(image=image, gpu="T4", volumes={"/data": volume}, timeout=3600)
 def train():
+    print(f"\n=== Starting training at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
+    print(f"Using device: {torch.device('cuda' if torch.cuda.is_available() else 'cpu')}")
+    print("\nModel configuration:")
+    for k, v in MODEL_CONFIG.items():
+        print(f"  {k}: {v}")
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     download_data()
     
     # Load data and create model
+    print("\nLoading dataset...")
     train_data = torch.load('/data/train.pt').to(device)
     val_data = torch.load('/data/val.pt').to(device)
+    print(f"Training data size: {len(train_data):,} tokens")
+    print(f"Validation data size: {len(val_data):,} tokens")
+    
+    print("\nInitializing model...")
     model = GPTLanguageModel(**{k: MODEL_CONFIG[k] for k in 
                                ['vocab_size', 'dim', 'n_layer', 'n_head', 'block_size']}).to(device)
+    
+    # Load previous checkpoint if it exists
+    if os.path.exists('/data/model.pt'):
+        print("Loading previous checkpoint...")
+        model.load_state_dict(torch.load('/data/model.pt'))
+        print("Resumed from previous checkpoint.")
+    
+    # Count parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Total parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,}")
+    
     optimizer = torch.optim.AdamW(model.parameters(), lr=MODEL_CONFIG['learning_rate'])
     
     def get_batch(split):
@@ -110,19 +199,51 @@ def train():
         return x.to(device), y.to(device)
     
     # Training loop
+    print("\nStarting training loop...")
+    start_time = time.time()
+    best_val_loss = float('inf')
+    
     for iter in range(MODEL_CONFIG['max_iters']):
+        # Evaluation
         if iter % MODEL_CONFIG['eval_interval'] == 0:
-            losses = [model(x, y)[1] for x, y in [get_batch('val') 
-                     for _ in range(MODEL_CONFIG['eval_iters'])]]
-            print(f"step {iter}: val loss {torch.mean(torch.tensor(losses)):.4f}")
+            model.eval()
+            with torch.no_grad():
+                losses = [model(x, y)[1] for x, y in [get_batch('val') 
+                         for _ in range(MODEL_CONFIG['eval_iters'])]]
+                val_loss = torch.mean(torch.tensor(losses))
+                
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    torch.save(model.state_dict(), '/data/model_best.pt')
+                
+                elapsed = time.time() - start_time
+                print(f"\nStep {iter}/{MODEL_CONFIG['max_iters']} ({iter/MODEL_CONFIG['max_iters']*100:.1f}%)")
+                print(f"Validation loss: {val_loss:.4f} (best: {best_val_loss:.4f})")
+                print(f"Time elapsed: {elapsed:.2f}s ({elapsed/60:.2f}min)")
         
+        # Training
+        model.train()
         xb, yb = get_batch('train')
         _, loss = model(xb, yb)
+        
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         optimizer.step()
+        
+        if iter % 100 == 0:
+            print(f"Training loss: {loss.item():.4f}", end='\r')
     
+    # Save final model
+    print("\nSaving final model...")
     torch.save(model.state_dict(), '/data/model.pt')
+    
+    # Final stats
+    total_time = time.time() - start_time
+    print(f"\n=== Training completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
+    print(f"Total training time: {total_time/60:.2f} minutes")
+    print(f"Final validation loss: {val_loss:.4f}")
+    print(f"Best validation loss: {best_val_loss:.4f}")
+    
     return "Training completed successfully!"
 
 @app.function(image=image, gpu="T4", volumes={"/data": volume})
