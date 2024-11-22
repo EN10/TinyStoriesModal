@@ -22,9 +22,11 @@ MODEL_CONFIG = {
     'block_size': 256,
     'batch_size': 32,
     'learning_rate': 3e-4,
-    'max_iters': 500,
-    'eval_interval': 500,
-    'eval_iters': 200,
+    'max_iters': 1000,
+    'eval_interval': 200,   # Every ~5-10 minutes. Lower (e.g., 100) for more frequent checkpoints, higher (e.g., 500) for faster training
+    'eval_iters': 200,      # 50-200 is typical. Lower (e.g., 50) for faster eval, higher (e.g., 400) for more stable metrics
+    'num_train_files': 10,  # Number of training files to use (max 45)
+    'val_percent': 10,      # Percentage of training files to use for validation (e.g., 10 = 10%)
 }
 
 class Block(nn.Module):
@@ -86,17 +88,25 @@ class GPTLanguageModel(nn.Module):
 def get_tar_file_sizes(tar_path):
     """Get file sizes from tar archive"""
     import subprocess
+    print("Running tar command to list archive contents...", flush=True)
     result = subprocess.run(['tar', '-tvf', tar_path], capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"Failed to read tar contents: {result.stderr}")
     
+    print("Parsing archive contents...", flush=True)
     file_sizes = {}
-    for line in result.stdout.splitlines():
+    total_lines = len(result.stdout.splitlines())
+    for i, line in enumerate(result.stdout.splitlines(), 1):
+        if i % 1000 == 0:  # Log progress every 1000 lines
+            print(f"Processed {i:,}/{total_lines:,} entries...", flush=True)
+        
         parts = line.split()
         size = int(parts[2])
         filename = parts[-1]
         if filename.startswith('tok105/') and filename.endswith('.bin'):
             file_sizes[os.path.basename(filename)] = size
+    
+    print(f"Found {len(file_sizes)} data files in archive", flush=True)
     return file_sizes
 
 def download_data():
@@ -125,8 +135,14 @@ def download_data():
     if not all(f in existing_files for f in ["train.pt", "val.pt"]):
         print("Processing pre-tokenized data...")
         
-        # Check if all required data files exist and have correct sizes
-        required_files = [f"data{str(i).zfill(2)}.bin" for i in range(50)]
+        # Calculate number of validation files based on percentage
+        num_train = MODEL_CONFIG['num_train_files']
+        num_val = max(1, round(num_train * MODEL_CONFIG['val_percent'] / 100))
+        print(f"\nUsing {num_train} files for training and {num_val} files for validation ({MODEL_CONFIG['val_percent']}%)")
+        
+        required_files = ([f"data{str(i).zfill(2)}.bin" for i in range(num_train)] + 
+                         [f"data{str(i).zfill(2)}.bin" for i in range(45, 45 + num_val)])
+        
         existing_data_files = set()
         if os.path.exists("/data/tok105"):
             existing_data_files = set(os.listdir("/data/tok105"))
@@ -194,11 +210,11 @@ def download_data():
         
         print("\nConverting data to tensors...")
         try:
-            # Process training data (files 00-44)
+            # Process training data
             train_tokens = []
             total_train_tokens = 0
             print("Processing training files:")
-            for i in range(45):
+            for i in range(num_train):
                 file_num = str(i).zfill(2)
                 file_path = f'/data/tok105/data{file_num}.bin'
                 if not os.path.exists(file_path):
@@ -226,11 +242,11 @@ def download_data():
             torch.save(train_data, '/data/train.pt')
             print(f"Saved training data: {len(train_data):,} tokens")
             
-            # Process validation data (files 45-49)
+            # Process validation data
             val_tokens = []
             total_val_tokens = 0
             print("\nProcessing validation files:")
-            for i in range(45, 50):
+            for i in range(45, 45 + num_val):
                 file_num = str(i).zfill(2)
                 file_path = f'/data/tok105/data{file_num}.bin'
                 if not os.path.exists(file_path):
@@ -296,15 +312,28 @@ def train():
     best_val_loss = float('inf')
     
     # Load previous checkpoint if it exists
-    checkpoint_path = '/data/checkpoint.pt'
-    if os.path.exists(checkpoint_path):
-        print("Loading previous checkpoint...")
-        checkpoint = torch.load(checkpoint_path)
-        model.load_state_dict(checkpoint['model_state'])
-        optimizer.load_state_dict(checkpoint['optimizer_state'])
-        start_iter = checkpoint['iteration']
-        best_val_loss = checkpoint['best_val_loss']
-        print(f"Resumed from iteration {start_iter} with best validation loss: {best_val_loss:.4f}")
+    checkpoint_files = ['model_best.pt', 'checkpoint.pt', 'model.pt']
+    checkpoint_loaded = False
+    
+    print("Looking for existing checkpoints...")
+    for checkpoint_file in checkpoint_files:
+        checkpoint_path = f'/data/{checkpoint_file}'
+        if os.path.exists(checkpoint_path):
+            print(f"Loading checkpoint from {checkpoint_file}...")
+            try:
+                checkpoint = torch.load(checkpoint_path)
+                model.load_state_dict(checkpoint['model_state'])
+                optimizer.load_state_dict(checkpoint['optimizer_state'])
+                start_iter = checkpoint['iteration']
+                best_val_loss = checkpoint['best_val_loss']
+                checkpoint_loaded = True
+                print(f"Resumed from iteration {start_iter} with best validation loss: {best_val_loss:.4f}")
+                break
+            except Exception as e:
+                print(f"Failed to load {checkpoint_file}: {e}")
+    
+    if not checkpoint_loaded:
+        print("No valid checkpoint found. Starting training from scratch.")
     
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
@@ -409,9 +438,24 @@ def inference(initial_context="Once upon a time ", max_new_tokens=256):
     # Load model
     model = GPTLanguageModel(**{k: MODEL_CONFIG[k] for k in 
                                ['vocab_size', 'dim', 'n_layer', 'n_head', 'block_size']}).to(device)
-    try:
-        model.load_state_dict(torch.load('/data/model.pt'))
-    except FileNotFoundError:
+    
+    # Try loading the model from different possible checkpoint files
+    checkpoint_files = ['model_best.pt', 'checkpoint.pt', 'model.pt']
+    model_loaded = False
+    
+    for checkpoint_file in checkpoint_files:
+        try:
+            checkpoint_path = f'/data/{checkpoint_file}'
+            if os.path.exists(checkpoint_path):
+                print(f"Loading model from {checkpoint_file}")
+                checkpoint = torch.load(checkpoint_path, weights_only=True)
+                model.load_state_dict(checkpoint['model_state'])
+                model_loaded = True
+                break
+        except Exception as e:
+            print(f"Failed to load {checkpoint_file}: {e}")
+    
+    if not model_loaded:
         return "Error: No trained model found. Please run training first."
     
     # Load tokenizer and generate text
@@ -422,17 +466,50 @@ def inference(initial_context="Once upon a time ", max_new_tokens=256):
         download_data()
         sp.load('/data/tok105.model')
     
-    context_tokens = torch.tensor([sp.encode(initial_context)], dtype=torch.long, device=device)
-    with torch.no_grad():
-        generated_tokens = model.generate(context_tokens, max_new_tokens)
-    
-    return sp.decode(generated_tokens[0].tolist())
+    print("Generating text...")
+    try:
+        # Encode input text
+        context_tokens = torch.tensor([sp.encode(initial_context)], dtype=torch.long, device=device)
+        print(f"Input tokens: {context_tokens.tolist()}")
+        
+        # Generate tokens
+        model.eval()  # Set model to evaluation mode
+        with torch.no_grad():
+            generated_tokens = model.generate(context_tokens, max_new_tokens)
+            
+        # Process tokens in smaller chunks for decoding
+        all_text = []
+        tokens = generated_tokens[0].tolist()
+        print(f"Generated tokens: {tokens[:10]}...")  # Print first few tokens for debugging
+        
+        # Decode all tokens at once
+        generated_text = sp.decode(tokens)
+        
+        # Clean up any potential control characters
+        import re
+        generated_text = re.sub(r'[\x00-\x1F\x7F-\x9F]', '', generated_text)
+        
+        print(f"Clean text: {generated_text[:100]}...")  # Print first 100 chars for debugging
+        return generated_text
+        
+    except Exception as e:
+        print(f"Error during text generation: {e}")
+        return f"Error generating text: {str(e)}"
 
 @app.local_entrypoint()
-def main():
-    import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "inference":
-        context = sys.argv[2] if len(sys.argv) > 2 else "Once upon a time "
-        print("Generated text:", inference.remote(initial_context=context))
-    else:
+def main(command: str = "train", prompt: str = "Once upon a time"):
+    """
+    Main entry point for the application.
+    Args:
+        command: Either "train" or "inference"
+        prompt: Initial text prompt for inference (only used if command is "inference")
+    """
+    if command == "inference":
+        print(f"Generating text from prompt: {prompt}")
+        print("Generated text:", inference.remote(initial_context=prompt))
+    elif command == "train":
+        print("Starting training...")
         train.remote()
+    else:
+        print(f"Unknown command: {command}")
+        print("Available commands: train, inference")
