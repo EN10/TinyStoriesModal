@@ -22,7 +22,7 @@ MODEL_CONFIG = {
     'block_size': 256,
     'batch_size': 32,
     'learning_rate': 3e-4,
-    'max_iters': 5000,
+    'max_iters': 500,
     'eval_interval': 500,
     'eval_iters': 200,
 }
@@ -83,77 +83,191 @@ class GPTLanguageModel(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)
         return idx
 
+def get_tar_file_sizes(tar_path):
+    """Get file sizes from tar archive"""
+    import subprocess
+    result = subprocess.run(['tar', '-tvf', tar_path], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to read tar contents: {result.stderr}")
+    
+    file_sizes = {}
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        size = int(parts[2])
+        filename = parts[-1]
+        if filename.startswith('tok105/') and filename.endswith('.bin'):
+            file_sizes[os.path.basename(filename)] = size
+    return file_sizes
+
 def download_data():
     os.makedirs("/data", exist_ok=True)
     
     # Check what files we already have
     existing_files = set(os.listdir("/data"))
+    print(f"Existing files: {existing_files}")
     
-    # Download and extract training data first
-    if "data.tar.gz" not in existing_files:
-        print("Downloading training data...")
-        data_url = "https://huggingface.co/datasets/enio/TinyStories/resolve/main/tok105/data.tar.gz"
-        os.system(f"cd /data && wget {data_url}")
+    # Download tokenizer model file if needed
+    tokenizer_files = {
+        "tok105.model": "https://huggingface.co/datasets/enio/TinyStories/resolve/main/tok105/tok105.model",
+    }
     
-    if "train.txt" not in existing_files or "val.txt" not in existing_files:
-        print("Extracting training data...")
-        print("  - Extracting train.txt...")
-        print("  - Extracting val.txt...")
-        os.system("cd /data && tar -xvzf data.tar.gz")
-        # Verify extraction
-        if not os.path.exists("/data/train.txt") or not os.path.exists("/data/val.txt"):
-            raise RuntimeError("Failed to extract training data files")
-    
-    # Download tokenizer files if needed
-    tokenizer_files = ["tok105.model", "tok105.vocab", "tok105.tar.gz"]
-    base_url = "https://huggingface.co/datasets/enio/TinyStories/resolve/main/tok105/"
-    
-    for file in tokenizer_files:
+    for file, url in tokenizer_files.items():
         if file not in existing_files:
             print(f"Downloading {file}...")
-            os.system(f"cd /data && wget {base_url}{file}")
+            result = os.system(f"cd /data && wget {url}")
+            if result != 0:
+                raise RuntimeError(f"wget failed with exit code {result} for {file}")
             if not os.path.exists(f"/data/{file}"):
                 raise RuntimeError(f"Failed to download {file}")
+            print(f"Successfully downloaded {file}")
     
-    # Extract tokenizer files only if necessary files don't exist
-    if not all(f in existing_files for f in ["tok105.model", "tok105.vocab"]):
-        print("Extracting tokenizer files...")
-        print("  - Extracting tok105.model...")
-        print("  - Extracting tok105.vocab...")
-        os.system("cd /data && tar -xvzf tok105.tar.gz")
-        if not os.path.exists("/data/tok105.model"):
-            raise RuntimeError("Failed to extract tokenizer files")
-    else:
-        print("Tokenizer files already extracted, skipping extraction.")
-    
-    # Check if processed data files exist
-    if 'train.pt' in existing_files and 'val.pt' in existing_files:
-        print("Found existing processed data files, skipping data preparation.")
-        return
-    
-    # Process and save the data
-    print("Processing training data...")
-    import sentencepiece as spm
-    sp = spm.SentencePieceProcessor()
-    sp.load('/data/tok105.model')
-    
-    # Read and tokenize the text files
-    try:
-        with open('/data/train.txt', 'r') as f:
-            train_text = f.read()
-        with open('/data/val.txt', 'r') as f:
-            val_text = f.read()
-    except FileNotFoundError as e:
-        raise RuntimeError(f"Could not read training files: {e}")
+    # Process pre-tokenized data files if needed
+    if not all(f in existing_files for f in ["train.pt", "val.pt"]):
+        print("Processing pre-tokenized data...")
+        
+        # Check if all required data files exist and have correct sizes
+        required_files = [f"data{str(i).zfill(2)}.bin" for i in range(50)]
+        existing_data_files = set()
+        if os.path.exists("/data/tok105"):
+            existing_data_files = set(os.listdir("/data/tok105"))
+        
+        # Download pre-tokenized data if needed
+        tar_file = "tok105.tar.gz"
+        if tar_file not in existing_files:
+            print("Downloading pre-tokenized data...")
+            data_url = "https://huggingface.co/datasets/enio/TinyStories/resolve/main/tok105/tok105.tar.gz"
+            result = os.system(f"cd /data && wget {data_url}")
+            if result != 0:
+                raise RuntimeError(f"wget failed with exit code {result}")
+        else:
+            print(f"Using existing {tar_file}")
+        
+        # Get expected file sizes from tar
+        print("Checking file sizes in archive...")
+        expected_sizes = get_tar_file_sizes(f"/data/{tar_file}")
+        
+        # Check for missing or incomplete files
+        missing_files = []
+        incomplete_files = []
+        for file in required_files:
+            if file not in existing_data_files:
+                missing_files.append(file)
+            else:
+                actual_size = os.path.getsize(f"/data/tok105/{file}")
+                expected_size = expected_sizes[file]
+                if actual_size != expected_size:
+                    print(f"File {file} has incorrect size: {actual_size} bytes (expected {expected_size})")
+                    incomplete_files.append(file)
+        
+        files_to_extract = missing_files + incomplete_files
+        if files_to_extract:
+            print(f"\nNeed to extract {len(files_to_extract)} files:")
+            print(f"- Missing: {len(missing_files)} files")
+            print(f"- Incomplete: {len(incomplete_files)} files")
             
-    # Convert to tensors and save
-    train_data = torch.tensor(sp.encode(train_text), dtype=torch.long)
-    val_data = torch.tensor(sp.encode(val_text), dtype=torch.long)
-    
-    torch.save(train_data, '/data/train.pt')
-    torch.save(val_data, '/data/val.pt')
-    
-    print(f"Saved processed data: train ({len(train_data):,} tokens), val ({len(val_data):,} tokens)")
+            # Create tok105 directory if it doesn't exist
+            os.makedirs("/data/tok105", exist_ok=True)
+            
+            # Extract files one by one for better logging
+            print("\nExtracting files...")
+            for file in files_to_extract:
+                print(f"Extracting {file}...", end='', flush=True)
+                extract_cmd = f"cd /data && tar -xf {tar_file} tok105/{file}"
+                result = os.system(extract_cmd)
+                if result != 0:
+                    print(" Failed!")
+                    raise RuntimeError(f"tar extraction failed for {file} with exit code {result}")
+                
+                # Verify extracted file
+                if not os.path.exists(f"/data/tok105/{file}"):
+                    print(" File not found after extraction!")
+                    raise RuntimeError(f"Failed to extract {file}")
+                
+                actual_size = os.path.getsize(f"/data/tok105/{file}")
+                expected_size = expected_sizes[file]
+                if actual_size != expected_size:
+                    print(f" Size mismatch: {actual_size} bytes (expected {expected_size})")
+                    raise RuntimeError(f"Extracted file {file} has incorrect size")
+                print(f" Success ({actual_size:,} bytes)")
+        else:
+            print("All required data files are present and complete")
+        
+        print("\nConverting data to tensors...")
+        try:
+            # Process training data (files 00-44)
+            train_tokens = []
+            total_train_tokens = 0
+            print("Processing training files:")
+            for i in range(45):
+                file_num = str(i).zfill(2)
+                file_path = f'/data/tok105/data{file_num}.bin'
+                if not os.path.exists(file_path):
+                    raise RuntimeError(f"Missing training file: {file_path}")
+                print(f"Reading file {file_num}...", end='', flush=True)
+                with open(file_path, 'rb') as f:
+                    data = f.read()
+                    train_tokens.extend(list(data))
+                    total_train_tokens += len(data)
+                print(f" Added {len(data):,} tokens (Total: {total_train_tokens:,})")
+            
+            print("\nConverting training data to tensor...")
+            chunk_size = 10_000_000  # Process 10M tokens at a time
+            tensor_chunks = []
+            for i in range(0, len(train_tokens), chunk_size):
+                print(f"Converting chunk {i//chunk_size + 1}/{(len(train_tokens) + chunk_size - 1)//chunk_size}...", 
+                      end='', flush=True)
+                chunk = torch.tensor(train_tokens[i:i + chunk_size], dtype=torch.long)
+                tensor_chunks.append(chunk)
+                print(f" Done ({i + len(chunk):,}/{len(train_tokens):,} tokens)")
+            
+            print("Concatenating chunks...")
+            train_data = torch.cat(tensor_chunks)
+            print("Saving training data...")
+            torch.save(train_data, '/data/train.pt')
+            print(f"Saved training data: {len(train_data):,} tokens")
+            
+            # Process validation data (files 45-49)
+            val_tokens = []
+            total_val_tokens = 0
+            print("\nProcessing validation files:")
+            for i in range(45, 50):
+                file_num = str(i).zfill(2)
+                file_path = f'/data/tok105/data{file_num}.bin'
+                if not os.path.exists(file_path):
+                    raise RuntimeError(f"Missing validation file: {file_path}")
+                print(f"Reading file {file_num}...", end='', flush=True)
+                with open(file_path, 'rb') as f:
+                    data = f.read()
+                    val_tokens.extend(list(data))
+                    total_val_tokens += len(data)
+                print(f" Added {len(data):,} tokens (Total: {total_val_tokens:,})")
+            
+            print("\nConverting validation data to tensor...")
+            # Convert validation data in chunks too if needed
+            if len(val_tokens) > chunk_size:
+                tensor_chunks = []
+                for i in range(0, len(val_tokens), chunk_size):
+                    print(f"Converting chunk {i//chunk_size + 1}/{(len(val_tokens) + chunk_size - 1)//chunk_size}...", 
+                          end='', flush=True)
+                    chunk = torch.tensor(val_tokens[i:i + chunk_size], dtype=torch.long)
+                    tensor_chunks.append(chunk)
+                    print(f" Done ({i + len(chunk):,}/{len(val_tokens):,} tokens)")
+                print("Concatenating chunks...")
+                val_data = torch.cat(tensor_chunks)
+            else:
+                val_data = torch.tensor(val_tokens, dtype=torch.long)
+            
+            print("Saving validation data...")
+            torch.save(val_data, '/data/val.pt')
+            print(f"Saved validation data: {len(val_data):,} tokens")
+            
+            # Cleanup extracted files
+            print("\nCleaning up...")
+            os.system("rm -rf /data/tok105 /data/tok105.tar.gz")
+            
+        except Exception as e:
+            print(f"Error processing data: {e}")
+            raise RuntimeError("Failed to process pre-tokenized data")
 
 @app.function(image=image, gpu="T4", volumes={"/data": volume}, timeout=3600)
 def train():
@@ -177,11 +291,20 @@ def train():
     model = GPTLanguageModel(**{k: MODEL_CONFIG[k] for k in 
                                ['vocab_size', 'dim', 'n_layer', 'n_head', 'block_size']}).to(device)
     
+    optimizer = torch.optim.AdamW(model.parameters(), lr=MODEL_CONFIG['learning_rate'])
+    start_iter = 0
+    best_val_loss = float('inf')
+    
     # Load previous checkpoint if it exists
-    if os.path.exists('/data/model.pt'):
+    checkpoint_path = '/data/checkpoint.pt'
+    if os.path.exists(checkpoint_path):
         print("Loading previous checkpoint...")
-        model.load_state_dict(torch.load('/data/model.pt'))
-        print("Resumed from previous checkpoint.")
+        checkpoint = torch.load(checkpoint_path)
+        model.load_state_dict(checkpoint['model_state'])
+        optimizer.load_state_dict(checkpoint['optimizer_state'])
+        start_iter = checkpoint['iteration']
+        best_val_loss = checkpoint['best_val_loss']
+        print(f"Resumed from iteration {start_iter} with best validation loss: {best_val_loss:.4f}")
     
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
@@ -189,7 +312,24 @@ def train():
     print(f"Total parameters: {total_params:,}")
     print(f"Trainable parameters: {trainable_params:,}")
     
-    optimizer = torch.optim.AdamW(model.parameters(), lr=MODEL_CONFIG['learning_rate'])
+    def save_checkpoint(iteration, model, optimizer, val_loss, is_best=False):
+        checkpoint = {
+            'iteration': iteration,
+            'model_state': model.state_dict(),
+            'optimizer_state': optimizer.state_dict(),
+            'best_val_loss': best_val_loss,
+            'model_config': MODEL_CONFIG,
+        }
+        
+        # Save regular checkpoint
+        torch.save(checkpoint, checkpoint_path)
+        print(f"Saved checkpoint at iteration {iteration}")
+        
+        # Save best model if this is the best so far
+        if is_best:
+            best_model_path = '/data/model_best.pt'
+            torch.save(checkpoint, best_model_path)
+            print(f"Saved new best model with validation loss: {val_loss:.4f}")
     
     def get_batch(split):
         data = train_data if split == 'train' else val_data
@@ -200,42 +340,57 @@ def train():
     
     # Training loop
     print("\nStarting training loop...")
+    print(f"Training from iteration {start_iter} to {MODEL_CONFIG['max_iters']}")
     start_time = time.time()
-    best_val_loss = float('inf')
+    checkpoint_interval = min(500, MODEL_CONFIG['eval_interval'])  # Save every 500 iterations or at eval, whichever is smaller
     
-    for iter in range(MODEL_CONFIG['max_iters']):
-        # Evaluation
-        if iter % MODEL_CONFIG['eval_interval'] == 0:
-            model.eval()
-            with torch.no_grad():
-                losses = [model(x, y)[1] for x, y in [get_batch('val') 
-                         for _ in range(MODEL_CONFIG['eval_iters'])]]
-                val_loss = torch.mean(torch.tensor(losses))
-                
-                if val_loss < best_val_loss:
-                    best_val_loss = val_loss
-                    torch.save(model.state_dict(), '/data/model_best.pt')
-                
-                elapsed = time.time() - start_time
-                print(f"\nStep {iter}/{MODEL_CONFIG['max_iters']} ({iter/MODEL_CONFIG['max_iters']*100:.1f}%)")
-                print(f"Validation loss: {val_loss:.4f} (best: {best_val_loss:.4f})")
-                print(f"Time elapsed: {elapsed:.2f}s ({elapsed/60:.2f}min)")
-        
-        # Training
-        model.train()
-        xb, yb = get_batch('train')
-        _, loss = model(xb, yb)
-        
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        optimizer.step()
-        
-        if iter % 100 == 0:
-            print(f"Training loss: {loss.item():.4f}", end='\r')
+    try:
+        for iter in range(start_iter, MODEL_CONFIG['max_iters']):
+            # Evaluation
+            if iter % MODEL_CONFIG['eval_interval'] == 0:
+                model.eval()
+                with torch.no_grad():
+                    losses = [model(x, y)[1] for x, y in [get_batch('val') 
+                             for _ in range(MODEL_CONFIG['eval_iters'])]]
+                    val_loss = torch.mean(torch.tensor(losses))
+                    
+                    is_best = val_loss < best_val_loss
+                    if is_best:
+                        best_val_loss = val_loss
+                    
+                    elapsed = time.time() - start_time
+                    print(f"\nStep {iter}/{MODEL_CONFIG['max_iters']} ({iter/MODEL_CONFIG['max_iters']*100:.1f}%)")
+                    print(f"Validation loss: {val_loss:.4f} (best: {best_val_loss:.4f})")
+                    print(f"Time elapsed: {elapsed:.2f}s ({elapsed/60:.2f}min)")
+                    
+                    # Save checkpoint at evaluation
+                    save_checkpoint(iter, model, optimizer, val_loss, is_best)
+            
+            # Regular checkpoint saving
+            if iter % checkpoint_interval == 0 and iter != 0:
+                save_checkpoint(iter, model, optimizer, best_val_loss)
+            
+            # Training
+            model.train()
+            xb, yb = get_batch('train')
+            _, loss = model(xb, yb)
+            
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+            
+            if iter % 100 == 0:
+                print(f"Training loss: {loss.item():.4f}", end='\r')
+    
+    except KeyboardInterrupt:
+        print("\n\nTraining interrupted! Saving checkpoint...")
+        save_checkpoint(iter, model, optimizer, best_val_loss)
+        print("Checkpoint saved. Exiting...")
+        return "Training interrupted but checkpoint saved!"
     
     # Save final model
-    print("\nSaving final model...")
-    torch.save(model.state_dict(), '/data/model.pt')
+    print("\nSaving final checkpoint...")
+    save_checkpoint(MODEL_CONFIG['max_iters'], model, optimizer, best_val_loss)
     
     # Final stats
     total_time = time.time() - start_time
