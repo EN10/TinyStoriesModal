@@ -40,12 +40,12 @@ modal volume create tinystories-volume
 
 4. Run the training:
 ```
-python tinystories.py
+modal run tinystories.py
 ```
 
 Or run inference:
 ```
-python tinystories.py inference "Once upon a time"
+modal run tinystories.py inference "Once upon a time"
 ```
 
 ## Model Architecture
@@ -100,12 +100,12 @@ The code provides two main modes of operation:
 
 1. Training:
 ```bash
-python tinystories.py
+modal run tinystories.py
 ```
 
 2. Inference:
 ```bash
-python tinystories.py inference "Once upon a time"
+modal run tinystories.py inference "Once upon a time"
 ```
 
 The inference command accepts an optional prompt to start the story generation.

@@ -1,14 +1,13 @@
-import tinystories
+import modal
 import torch
 import torch.nn as nn
-from torch.nn import functional as F
+import torch.nn.functional as F
 import os
-import sentencepiece as spm
 
-# Infrastructure setup
-stub = tinystories.Stub("tinystories-training")
-volume = tinystories.Volume.from_name("tinystories-volume")
-image = (tinystories.Image.debian_slim()
+# Update Modal stub to App
+app = modal.App("tinystories-training")
+volume = modal.Volume.from_name("tinystories-volume")
+image = (modal.Image.debian_slim()
          .pip_install("torch", "numpy", "sentencepiece")
          .run_commands("apt-get update", "apt-get install -y wget"))
 
@@ -91,7 +90,7 @@ def download_data():
         os.system(f"cd /data && wget {base_url}{file}")
     os.system("cd /data && tar -xf tok105.tar.gz")
 
-@stub.function(image=image, gpu="T4", volumes={"/data": volume}, timeout=3600)
+@app.function(image=image, gpu="T4", volumes={"/data": volume}, timeout=3600)
 def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     download_data()
@@ -126,8 +125,9 @@ def train():
     torch.save(model.state_dict(), '/data/model.pt')
     return "Training completed successfully!"
 
-@stub.function(image=image, gpu="T4", volumes={"/data": volume})
+@app.function(image=image, gpu="T4", volumes={"/data": volume})
 def inference(initial_context="Once upon a time ", max_new_tokens=256):
+    import sentencepiece as spm
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Load model
@@ -152,7 +152,7 @@ def inference(initial_context="Once upon a time ", max_new_tokens=256):
     
     return sp.decode(generated_tokens[0].tolist())
 
-@stub.local_entrypoint()
+@app.local_entrypoint()
 def main():
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "inference":
