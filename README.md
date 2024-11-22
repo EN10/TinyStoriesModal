@@ -9,10 +9,27 @@ The project implements a transformer-based language model that can:
 - Generate new text in a similar style
 - Run efficiently in the cloud using Modal's GPU infrastructure
 
-## Files
+## Files and Dependencies
 
-- `tinystories.py`: Main implementation using Modal for cloud training
-- No requirements.txt file is needed since dependencies are handled by Modal image
+### For Training
+- `tinystories.py` - Main implementation file
+- Data files (automatically downloaded):
+  - Pre-tokenized training data
+  - SentencePiece tokenizer model
+  - Generated during training:
+    - Processed datasets (train.pt, val.pt)
+    - Model checkpoints
+
+### For Inference
+- `tinystories.py` - Main implementation file
+- Required files (must exist from previous training):
+  - `tok105.model` - Tokenizer model
+  - Model checkpoint (one of):
+    - `model_best.pt`
+    - `checkpoint.pt`
+    - `model.pt`
+
+Note: All files are automatically managed in the Modal volume `tinystories-volume`.
 
 ## Requirements
 
