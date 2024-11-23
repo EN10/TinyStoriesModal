@@ -29,11 +29,16 @@ modal run simple.py --command train
 
 This will:
 1. Download required files:
-   - tok105.tar.gz (training data)
-   - tok105.bin (tokenizer)
-   - Training scripts from llama2.c
+   - From HuggingFace:
+     - tok105.tar.gz (training data)
+     - tok105.bin (tokenizer)
+   - From llama2.c GitHub:
+     - train.py, model.py, configurator.py
+     - export.py, tokenizer.py, tinystories.py
+     - run.c (inference program)
 2. Extract training data
-3. Train the model with:
+3. Compile run.c for inference
+4. Train the model with:
    - Vocabulary size: 105
    - Model dimension: 128
    - 5 layers, 8 heads
@@ -47,25 +52,11 @@ modal run simple.py --command inference --prompt "Once upon a time"
 ```
 
 This will:
-1. Compile the inference program (run.c)
+1. Use the compiled run program
 2. Generate text using:
    - Temperature: 0.8
    - Max tokens: 256
    - Your provided prompt
-
-## Files Used
-
-1. **Training Data**
-   - tok105.tar.gz: Pre-tokenized training stories
-   - tok105.bin: Binary tokenizer file
-
-2. **Scripts from llama2.c**
-   - train.py: Training script
-   - model.py: Model definition
-   - configurator.py: Configuration handling
-   - export.py: Model export utilities
-   - tokenizer.py: Tokenizer implementation
-   - run.c: Inference program
 
 ## Directory Structure
 
