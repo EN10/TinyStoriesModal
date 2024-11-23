@@ -8,30 +8,32 @@ volume = modal.Volume.from_name("tinystories-volume")
 image = (modal.Image.debian_slim()
          .apt_install("wget"))
          
-def get_tar_file_sizes(tar_path):
+def get_tar_file_sizes(tar_path, total_files=None):
     """Get file sizes from tar archive"""
     print("\nGetting archive contents...")
     
-    # Count files with progress indicator
-    print("Counting files in archive...")
-    process = subprocess.Popen(['tar', '-tvf', tar_path],
-                             stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE,
-                             universal_newlines=True)
-    
-    file_count = 0
-    spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-    spinner_idx = 0
-    
-    for line in process.stdout:
-        file_count += 1
-        if file_count % 5 == 0:  # Update every 5 files instead of 100
-            spinner_char = spinner[spinner_idx]
-            print(f"\r{spinner_char} Counted {file_count:,} files...", end='', flush=True)
-            spinner_idx = (spinner_idx + 1) % len(spinner)
-    
-    print(f"\nTotal files in archive: {file_count:,}")
-    
+    if total_files is None:
+        # Count files with progress indicator
+        print("Counting files in archive...")
+        process = subprocess.Popen(['tar', '-tvf', tar_path],
+                                 stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE,
+                                 universal_newlines=True)
+        
+        file_count = 0
+        spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        spinner_idx = 0
+        
+        for line in process.stdout:
+            file_count += 1
+            if file_count % 5 == 0:
+                spinner_char = spinner[spinner_idx]
+                print(f"\r{spinner_char} Counted {file_count:,} files...", end='', flush=True)
+                spinner_idx = (spinner_idx + 1) % len(spinner)
+        
+        print(f"\nTotal files in archive: {file_count:,}")
+        total_files = file_count
+
     # Now process with progress bar
     print("\nProcessing archive contents...")
     process = subprocess.Popen(['tar', '-tvf', tar_path],
@@ -45,14 +47,14 @@ def get_tar_file_sizes(tar_path):
     
     for line in process.stdout:
         processed_count += 1
-        percent = (processed_count * 100) // file_count
+        percent = (processed_count * 100) // total_files
         
         # Update progress bar if percentage changed
         if percent != last_percent:
             bar_length = 50
             filled = int(bar_length * percent / 100)
             bar = '=' * filled + '-' * (bar_length - filled)
-            print(f"\rProgress: [{bar}] {percent}% ({processed_count:,}/{file_count:,} files)", end='', flush=True)
+            print(f"\rProgress: [{bar}] {percent}% ({processed_count:,}/{total_files:,} files)", end='', flush=True)
             last_percent = percent
         
         # Process the file info
@@ -174,8 +176,9 @@ def download_tok105_files(num_train=10, val_percent=10):
             raise RuntimeError(f"wget failed with exit code {result}")
         print(f"Successfully downloaded {tar_file}")
     
-    # Verify tar file before proceeding
-    if not verify_tar_file(tar_file):
+    # Verify tar file and get file count
+    file_count = verify_tar_file(tar_file)
+    if not file_count:
         print("Tar file verification failed - will attempt to redownload")
         os.remove(f"/data/{tar_file}")
         print("Downloading pre-tokenized data again...")
@@ -183,11 +186,12 @@ def download_tok105_files(num_train=10, val_percent=10):
         result = os.system(f"cd /data && wget {data_url}")
         if result != 0:
             raise RuntimeError(f"wget failed with exit code {result}")
-        if not verify_tar_file(tar_file):
+        file_count = verify_tar_file(tar_file)
+        if not file_count:
             raise RuntimeError("Failed to download valid tar file after retry")
     
     # Get expected file sizes and verify/extract files
-    expected_sizes = get_tar_file_sizes(f"/data/{tar_file}")
+    expected_sizes = get_tar_file_sizes(f"/data/{tar_file}", file_count)
     
     all_verified, files_to_extract = verify_extracted_files(expected_sizes, required_files)
     if not all_verified:
@@ -264,7 +268,7 @@ def verify_tar_file(tar_file):
         return False
     
     print(f"\nTar file integrity check passed! (Verified {verified_count:,} files)")
-    return True
+    return verified_count
 
 @app.function(image=image, volumes={"/data": volume})
 def download_data(num_train=10, val_percent=10):
