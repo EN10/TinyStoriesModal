@@ -5,14 +5,13 @@ app = modal.App("tinystories-simple")
 volume = modal.Volume.from_name("tinystories-volume")
 image = (modal.Image.debian_slim()
          .pip_install("wget", "torch", "numpy", "tqdm", "pv", "requests", "sentencepiece")
-         .run_commands("apt-get update", "apt-get install -y gcc"))  # For compiling run.c
+         .run_commands("apt-get update", "apt-get install -y gcc"))
 
 # Files to download with their URLs
 FILES = {
-    # Training data and tokenizer
-    "tok105.tar.gz": "https://huggingface.co/datasets/enio/TinyStories/resolve/main/tok105/tok105.tar.gz",
-    "tok105.bin": "https://huggingface.co/datasets/enio/TinyStories/resolve/main/tok105/tok105.bin",
-    # Training scripts from llama2.c
+    # All files using dictionary comprehension
+    **{f: f"https://huggingface.co/datasets/enio/TinyStories/resolve/main/tok105/{f}" for f in 
+       ["tok105.tar.gz", "tok105.bin"]},
     **{f: f"https://raw.githubusercontent.com/karpathy/llama2.c/master/{f}" for f in 
        ["train.py", "model.py", "configurator.py", "export.py", "tokenizer.py", "tinystories.py", "run.c"]}
 }
@@ -33,6 +32,11 @@ def setup():
         print("Extracting training data...")
         os.system("pv tok105.tar.gz | tar xzf -")
     
+    # Compile run.c if needed
+    if not os.path.exists("run"):
+        print("\nCompiling run.c...")
+        os.system("gcc -O3 -o run run.c -lm")
+    
     # Setup data directory
     os.makedirs("data", exist_ok=True)
     if not os.path.exists("data/tok105"):
@@ -49,13 +53,6 @@ def setup():
 @app.function(image=image, volumes={"/data": volume})
 def inference(prompt="Once upon a time"):
     os.chdir("/data")
-    
-    # Compile run.c if needed
-    if not os.path.exists("run"):
-        print("Compiling run.c...")
-        os.system("gcc -O3 -o run run.c -lm")
-    
-    # Run inference
     print(f"\nGenerating text from prompt: {prompt}")
     cmd = f"./run out/model.bin -z tok105.bin -t 0.8 -n 256 -i \"{prompt}\""
     os.system(cmd)
