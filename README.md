@@ -129,7 +129,7 @@ modal run tinystories.py --command train
 
 2. Training (fresh start, ignoring existing checkpoints):
 ```bash
-modal run tinystories.py --command train --fresh_start true
+modal run tinystories.py --command train --fresh-start
 ```
 
 3. Inference:
