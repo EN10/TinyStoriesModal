@@ -118,19 +118,46 @@ MODEL_CONFIG = {
 
 ## Example Usage
 
-The code provides two main modes of operation:
+The code provides three main modes of operation:
 
-1. Training:
+1. Training (resume from checkpoint if available):
 ```bash
 modal run tinystories.py
+# or explicitly:
+modal run tinystories.py --command train
 ```
 
-2. Inference:
+2. Training (fresh start, ignoring existing checkpoints):
 ```bash
-modal run tinystories.py inference "Once upon a time"
+modal run tinystories.py --command train --fresh_start true
 ```
 
-The inference command accepts an optional prompt to start the story generation.
+3. Inference:
+```bash
+modal run tinystories.py --command inference --prompt "Once upon a time"
+```
+
+The inference command accepts an optional prompt to start the story generation. For training, you can choose to either resume from an existing checkpoint (default behavior) or start fresh by using the `fresh_start` flag.
+
+## Training Options
+
+The training process can be controlled with these command-line arguments:
+
+- `--command`: Either "train" or "inference" (default: "train")
+- `--fresh_start`: If true, starts training from scratch ignoring existing checkpoints (default: false)
+- `--prompt`: Initial text for story generation when using inference (default: "Once upon a time")
+
+Examples:
+```bash
+# Resume training from checkpoint (if available)
+modal run tinystories.py
+
+# Start fresh training (ignore/delete existing checkpoints)
+modal run tinystories.py --command train --fresh_start true
+
+# Generate text with a custom prompt
+modal run tinystories.py --command inference --prompt "In a magical forest"
+```
 
 ## Performance
 

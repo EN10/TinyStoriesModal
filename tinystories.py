@@ -286,7 +286,7 @@ def download_data():
             raise RuntimeError("Failed to process pre-tokenized data")
 
 @app.function(image=image, gpu="T4", volumes={"/data": volume}, timeout=3600)
-def train():
+def train(fresh_start=False):
     print(f"\n=== Starting training at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
     print(f"Using device: {torch.device('cuda' if torch.cuda.is_available() else 'cpu')}")
     print("\nModel configuration:")
@@ -311,28 +311,40 @@ def train():
     start_iter = 0
     best_val_loss = float('inf')
     
-    # Load previous checkpoint if it exists
+    # Load previous checkpoint if it exists and fresh_start is False
     checkpoint_files = ['model_best.pt', 'checkpoint.pt', 'model.pt']
     checkpoint_loaded = False
     
-    print("Looking for existing checkpoints...")
-    for checkpoint_file in checkpoint_files:
-        checkpoint_path = f'/data/{checkpoint_file}'
-        if os.path.exists(checkpoint_path):
-            print(f"Loading checkpoint from {checkpoint_file}...")
-            try:
-                checkpoint = torch.load(checkpoint_path)
-                model.load_state_dict(checkpoint['model_state'])
-                optimizer.load_state_dict(checkpoint['optimizer_state'])
-                start_iter = checkpoint['iteration']
-                best_val_loss = checkpoint['best_val_loss']
-                checkpoint_loaded = True
-                print(f"Resumed from iteration {start_iter} with best validation loss: {best_val_loss:.4f}")
-                break
-            except Exception as e:
-                print(f"Failed to load {checkpoint_file}: {e}")
-    
-    if not checkpoint_loaded:
+    if not fresh_start:
+        print("Looking for existing checkpoints...")
+        for checkpoint_file in checkpoint_files:
+            checkpoint_path = f'/data/{checkpoint_file}'
+            if os.path.exists(checkpoint_path):
+                print(f"Loading checkpoint from {checkpoint_file}...")
+                try:
+                    checkpoint = torch.load(checkpoint_path)
+                    model.load_state_dict(checkpoint['model_state'])
+                    optimizer.load_state_dict(checkpoint['optimizer_state'])
+                    start_iter = checkpoint['iteration']
+                    best_val_loss = checkpoint['best_val_loss']
+                    checkpoint_loaded = True
+                    print(f"Resumed from iteration {start_iter} with best validation loss: {best_val_loss:.4f}")
+                    break
+                except Exception as e:
+                    print(f"Failed to load {checkpoint_file}: {e}")
+    else:
+        print("Fresh start requested - skipping checkpoint loading")
+        # Optionally delete existing checkpoints
+        for checkpoint_file in checkpoint_files:
+            checkpoint_path = f'/data/{checkpoint_file}'
+            if os.path.exists(checkpoint_path):
+                try:
+                    os.remove(checkpoint_path)
+                    print(f"Deleted existing checkpoint: {checkpoint_file}")
+                except Exception as e:
+                    print(f"Failed to delete {checkpoint_file}: {e}")
+
+    if not checkpoint_loaded and not fresh_start:
         print("No valid checkpoint found. Starting training from scratch.")
     
     # Count parameters
@@ -497,19 +509,20 @@ def inference(initial_context="Once upon a time ", max_new_tokens=256):
         return f"Error generating text: {str(e)}"
 
 @app.local_entrypoint()
-def main(command: str = "train", prompt: str = "Once upon a time"):
+def main(command: str = "train", prompt: str = "Once upon a time", fresh_start: bool = False):
     """
     Main entry point for the application.
     Args:
         command: Either "train" or "inference"
         prompt: Initial text prompt for inference (only used if command is "inference")
+        fresh_start: If True, starts training from scratch (only used if command is "train")
     """
     if command == "inference":
         print(f"Generating text from prompt: {prompt}")
         print("Generated text:", inference.remote(initial_context=prompt))
     elif command == "train":
-        print("Starting training...")
-        train.remote()
+        print("Starting training..." + (" (fresh start)" if fresh_start else ""))
+        train.remote(fresh_start=fresh_start)
     else:
         print(f"Unknown command: {command}")
         print("Available commands: train, inference")
