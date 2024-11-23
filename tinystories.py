@@ -460,8 +460,9 @@ def inference(initial_context="Once upon a time ", max_new_tokens=256):
             checkpoint_path = f'/data/{checkpoint_file}'
             if os.path.exists(checkpoint_path):
                 print(f"Loading model from {checkpoint_file}")
-                checkpoint = torch.load(checkpoint_path, weights_only=True)
+                checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
                 model.load_state_dict(checkpoint['model_state'])
+                print(f"Model loaded successfully. Best validation loss: {checkpoint.get('best_val_loss', 'N/A')}")
                 model_loaded = True
                 break
         except Exception as e:
@@ -470,7 +471,7 @@ def inference(initial_context="Once upon a time ", max_new_tokens=256):
     if not model_loaded:
         return "Error: No trained model found. Please run training first."
     
-    # Load tokenizer and generate text
+    # Load tokenizer
     sp = spm.SentencePieceProcessor()
     try:
         sp.load('/data/tok105.model')
@@ -478,30 +479,50 @@ def inference(initial_context="Once upon a time ", max_new_tokens=256):
         download_data()
         sp.load('/data/tok105.model')
     
-    print("Generating text...")
+    print("\nGenerating text...")
     try:
         # Encode input text
         context_tokens = torch.tensor([sp.encode(initial_context)], dtype=torch.long, device=device)
-        print(f"Input tokens: {context_tokens.tolist()}")
+        print(f"Input context: {initial_context}")
         
         # Generate tokens
-        model.eval()  # Set model to evaluation mode
+        model.eval()
         with torch.no_grad():
             generated_tokens = model.generate(context_tokens, max_new_tokens)
-            
-        # Process tokens in smaller chunks for decoding
-        all_text = []
-        tokens = generated_tokens[0].tolist()
-        print(f"Generated tokens: {tokens[:10]}...")  # Print first few tokens for debugging
         
         # Decode all tokens at once
-        generated_text = sp.decode(tokens)
+        all_tokens = generated_tokens[0].tolist()
+        generated_text = sp.decode(all_tokens)
         
-        # Clean up any potential control characters
+        # Clean up the text
         import re
+        
+        # Remove the specific Unicode escape sequence
+        generated_text = generated_text.replace('\\342\\201\\207', '')
+        # Remove any remaining escape sequences
+        generated_text = re.sub(r'\\[0-9]{3}\\[0-9]{3}\\[0-9]{3}', '', generated_text)
+        
+        # Split into context and generated parts
+        context_len = len(initial_context)
+        context = generated_text[:context_len]
+        generated = generated_text[context_len:]
+        
+        # Clean up the generated part
+        generated = ''.join(generated.split())  # Remove all spaces
+        generated = re.sub(r'([.!?,])', r'\1 ', generated)  # Add space after punctuation
+        generated = re.sub(r'\s+', ' ', generated).strip()  # Normalize spaces
+        
+        # Combine context and generated text
+        generated_text = context + generated
+        
+        # Final cleanup
         generated_text = re.sub(r'[\x00-\x1F\x7F-\x9F]', '', generated_text)
         
-        print(f"Clean text: {generated_text[:100]}...")  # Print first 100 chars for debugging
+        print("\nGenerated text:")
+        print("-" * 80)
+        print(generated_text)
+        print("-" * 80)
+        
         return generated_text
         
     except Exception as e:
@@ -515,11 +536,12 @@ def main(command: str = "train", prompt: str = "Once upon a time", fresh_start: 
     Args:
         command: Either "train" or "inference"
         prompt: Initial text prompt for inference (only used if command is "inference")
-        fresh_start: If True, starts training from scratch (only used if command is "train")
+        fresh_start: If present, starts training from scratch (only used if command is "train")
     """
     if command == "inference":
         print(f"Generating text from prompt: {prompt}")
-        print("Generated text:", inference.remote(initial_context=prompt))
+        generated_text = inference.remote(initial_context=prompt)
+        # Don't print the text here since it's already printed in the inference function
     elif command == "train":
         print("Starting training..." + (" (fresh start)" if fresh_start else ""))
         train.remote(fresh_start=fresh_start)
