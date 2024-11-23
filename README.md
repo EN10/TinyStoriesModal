@@ -1,5 +1,18 @@
 # TinyStories Language Model
 
+## Contents
+- [Overview](#overview)
+- [Files and Dependencies](#files-and-dependencies)
+  - [Core Files](#core-files)
+  - [Data Files](#data-files-automatically-downloaded)
+  - [For Inference](#for-inference)
+- [Requirements](#requirements)
+- [Getting Started](#getting-started)
+- [Model Architecture](#model-architecture)
+- [Training Data](#training-data)
+- [Configuration](#configuration)
+- [Features](#features)
+
 This repository contains an implementation of a small GPT-style language model trained on the TinyStories dataset using Modal for cloud-based training.
 
 ## Overview
@@ -11,23 +24,26 @@ The project implements a transformer-based language model that can:
 
 ## Files and Dependencies
 
-### For Training
-- `tinystories.py` - Main implementation file
-- Data files (automatically downloaded):
-  - Pre-tokenized training data
-  - SentencePiece tokenizer model
-  - Generated during training:
-    - Processed datasets (train.pt, val.pt)
-    - Model checkpoints
+### Core Files
+- `tinystories.py` - Main implementation with model, training, and inference
+- `data.py` - Data downloading and preprocessing utilities
+- `simple.py` - Simplified training implementation
+- `delete.py` - Utility for cleaning up Modal volume files
+
+### Data Files (automatically downloaded)
+- Pre-tokenized training data
+- SentencePiece tokenizer model
+- Generated during training:
+  - Processed datasets (train.pt, val.pt)
+  - Model checkpoints
 
 ### For Inference
-- `tinystories.py` - Main implementation file
-- Required files (must exist from previous training):
-  - `tok105.model` - Tokenizer model
-  - Model checkpoint (one of):
-    - `model_best.pt`
-    - `checkpoint.pt`
-    - `model.pt`
+Required files (must exist from previous training):
+- `tok105.model` - Tokenizer model
+- Model checkpoint (one of):
+  - `model_best.pt`
+  - `checkpoint.pt`
+  - `model.pt`
 
 Note: All files are automatically managed in the Modal volume `tinystories-volume`.
 
@@ -137,14 +153,14 @@ modal run tinystories.py --command train --fresh-start
 modal run tinystories.py --command inference --prompt "Once upon a time"
 ```
 
-The inference command accepts an optional prompt to start the story generation. For training, you can choose to either resume from an existing checkpoint (default behavior) or start fresh by using the `fresh_start` flag.
+The inference command accepts an optional prompt to start the story generation. For training, you can choose to either resume from an existing checkpoint (default behavior) or start fresh by using the `--fresh-start` flag.
 
 ## Training Options
 
 The training process can be controlled with these command-line arguments:
 
 - `--command`: Either "train" or "inference" (default: "train")
-- `--fresh_start`: If true, starts training from scratch ignoring existing checkpoints (default: false)
+- `--fresh-start`: Flag to start training from scratch, ignoring existing checkpoints
 - `--prompt`: Initial text for story generation when using inference (default: "Once upon a time")
 
 Examples:
@@ -153,7 +169,7 @@ Examples:
 modal run tinystories.py
 
 # Start fresh training (ignore/delete existing checkpoints)
-modal run tinystories.py --command train --fresh_start true
+modal run tinystories.py --command train --fresh-start
 
 # Generate text with a custom prompt
 modal run tinystories.py --command inference --prompt "In a magical forest"
