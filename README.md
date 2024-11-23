@@ -33,6 +33,7 @@ The project implements a transformer-based language model that can:
 - `tinystories_modular.py` - Main implementation with modular design for training and inference
 - `tinystories_data.py` - Data downloading and preprocessing utilities
 - `volume_cleanup.py` - Utility for cleaning up Modal volume files
+- `transfer_model.py` - Utility for transferring models between local and Modal volume
 
 ### Data Files (automatically downloaded)
 - From HuggingFace:
@@ -121,7 +122,7 @@ batch_size = 32
 
 ## Example Usage
 
-The code provides two main modes of operation:
+The code provides three main modes of operation:
 
 1. Training:
 ```bash
@@ -133,10 +134,24 @@ modal run tinystories_modular.py --command train
 modal run tinystories_modular.py --command inference --prompt "Once upon a time"
 ```
 
+3. Model Transfer:
+```bash
+# Download model from Modal volume to local
+modal run transfer_model.py --action download --path out/model.bin
+
+# Upload model from local to Modal volume
+modal run transfer_model.py --action upload --path out/model.bin
+```
+
 ## Command Line Options
 
+### Main Script (tinystories_modular.py)
 - `--command`: Either "train" or "inference" (default: "train")
 - `--prompt`: Initial text for story generation when using inference (default: "Once upon a time")
+
+### Transfer Script (transfer_model.py)
+- `--action`: Either "download" or "upload" (default: "download")
+- `--path`: Local path for model file (default: "out/model.bin")
 
 ## Directory Structure
 
