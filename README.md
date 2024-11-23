@@ -9,9 +9,14 @@
 - [Requirements](#requirements)
 - [Getting Started](#getting-started)
 - [Model Architecture](#model-architecture)
-- [Training Data](#training-data)
 - [Configuration](#configuration)
 - [Features](#features)
+- [Example Usage](#example-usage)
+- [Command Line Options](#command-line-options)
+- [Directory Structure](#directory-structure)
+- [Contributing](#contributing)
+- [License](#license)
+- [Acknowledgments](#acknowledgments)
 
 This repository contains an implementation of a small GPT-style language model trained on the TinyStories dataset using Modal for cloud-based training.
 
@@ -25,27 +30,28 @@ The project implements a transformer-based language model that can:
 ## Files and Dependencies
 
 ### Core Files
-- `tinystories.py` - Main implementation with model, training, and inference
-- `data.py` - Data downloading and preprocessing utilities
-- `simple.py` - Simplified training implementation
-- `delete.py` - Utility for cleaning up Modal volume files
+- `tinystories_modular.py` - Main implementation with modular design for training and inference
+- `tinystories_data.py` - Data downloading and preprocessing utilities
+- `volume_cleanup.py` - Utility for cleaning up Modal volume files
 
 ### Data Files (automatically downloaded)
-- Pre-tokenized training data
-- SentencePiece tokenizer model
-- Generated during training:
-  - Processed datasets (train.pt, val.pt)
-  - Model checkpoints
+- From HuggingFace:
+  - `tok105.tar.gz` - Pre-tokenized training data
+  - `tok105.bin` - Tokenizer model
+- From llama2.c GitHub:
+  - `model.py` - Model implementation
+  - `export.py` - Model export utilities
+  - `configurator.py` - Configuration handling
+  - `tokenizer.py` - Tokenizer implementation
+  - `run.c` - C inference program (compiled automatically)
 
 ### For Inference
 Required files (must exist from previous training):
-- `tok105.model` - Tokenizer model
-- Model checkpoint (one of):
-  - `model_best.pt`
-  - `checkpoint.pt`
-  - `model.pt`
+- `tok105.bin` - Tokenizer model
+- `out/model.bin` - Trained model output
+- `run` - Compiled C inference program
 
-Note: All files are automatically managed in the Modal volume `tinystories-volume`.
+Note: All files are automatically managed in the Modal volume `tinystories-volume`. The setup function in `tinystories_modular.py` handles downloading and compiling all necessary files.
 
 ## Requirements
 
@@ -73,17 +79,12 @@ modal volume create tinystories-volume
 
 4. Run the training:
 ```
-modal run tinystories.py
+modal run tinystories_modular.py
 ```
 
-Or run with --detach for long-running training sessions that continue after disconnection:
+Or run inference with a custom prompt:
 ```
-modal run --detach tinystories.py
-```
-
-Or run inference:
-```
-modal run tinystories.py inference "Once upon a time"
+modal run tinystories_modular.py --command inference --prompt "Once upon a time"
 ```
 
 ## Model Architecture
@@ -96,91 +97,67 @@ The model is a small GPT-style transformer with:
 - Context length: 256 tokens
 - Total parameters: ~1M
 
-## Training Data
-
-The model uses the TinyStories dataset, specifically the tok105 tokenized version from Hugging Face:
-- Dataset: [enio/TinyStories](https://huggingface.co/datasets/enio/TinyStories)
-- Pre-tokenized with a vocabulary of 105 tokens
-- Data files are automatically downloaded during training/inference
-- Includes train.pt and val.pt for training and validation
-
 ## Configuration
 
-Key hyperparameters can be adjusted in the `MODEL_CONFIG` dictionary in `tinystories.py`:
-
+The model uses these default parameters:
 ```python
-MODEL_CONFIG = {
-    'vocab_size': 105,
-    'dim': 128,
-    'n_layer': 5,
-    'n_head': 8,
-    'block_size': 256,
-    'batch_size': 32,
-    'learning_rate': 3e-4,
-    'max_iters': 5000,
-    'eval_interval': 500,
-    'eval_iters': 200,
-}
+# Training parameters
+vocab_size = 105
+dim = 128
+n_layers = 5
+n_heads = 8
+n_kv_heads = 4
+batch_size = 32
 ```
 
 ## Features
 
-- **Efficient Training**: Uses PyTorch's native MultiheadAttention for optimal performance
-- **Cloud Support**: Runs on Modal's T4 GPU infrastructure with 1-hour timeout
-- **Pre-tokenized Data**: Uses SentencePiece tokenizer with a small, efficient vocabulary
-- **Progress Monitoring**: Regular evaluation of training and validation loss
-- **Text Generation**: Dedicated inference function for text generation
-- **Automatic Data Management**: Downloads and manages required dataset files
+- **Modular Design**: Separate functions for setup, training, and inference
+- **Automatic Setup**: Downloads and prepares all required files
+- **Progress Monitoring**: Shows download and extraction progress
+- **GPU Support**: Runs on Modal's T4 GPU infrastructure
+- **Simple Interface**: Easy-to-use command line interface
+- **Efficient Training**: Uses PyTorch for optimal performance
 
 ## Example Usage
 
-The code provides three main modes of operation:
+The code provides two main modes of operation:
 
-1. Training (resume from checkpoint if available):
+1. Training:
 ```bash
-modal run tinystories.py
-# or explicitly:
-modal run tinystories.py --command train
+modal run tinystories_modular.py --command train
 ```
 
-2. Training (fresh start, ignoring existing checkpoints):
+2. Inference:
 ```bash
-modal run tinystories.py --command train --fresh-start
+modal run tinystories_modular.py --command inference --prompt "Once upon a time"
 ```
 
-3. Inference:
-```bash
-modal run tinystories.py --command inference --prompt "Once upon a time"
-```
-
-The inference command accepts an optional prompt to start the story generation. For training, you can choose to either resume from an existing checkpoint (default behavior) or start fresh by using the `--fresh-start` flag.
-
-## Training Options
-
-The training process can be controlled with these command-line arguments:
+## Command Line Options
 
 - `--command`: Either "train" or "inference" (default: "train")
-- `--fresh-start`: Flag to start training from scratch, ignoring existing checkpoints
 - `--prompt`: Initial text for story generation when using inference (default: "Once upon a time")
 
-Examples:
-```bash
-# Resume training from checkpoint (if available)
-modal run tinystories.py
+## Directory Structure
 
-# Start fresh training (ignore/delete existing checkpoints)
-modal run tinystories.py --command train --fresh-start
-
-# Generate text with a custom prompt
-modal run tinystories.py --command inference --prompt "In a magical forest"
+After running, your Modal volume will contain:
+```
+/data/
+  ├── tok105.bin            # Tokenizer model
+  ├── tok105.tar.gz         # Training data archive
+  ├── tok105/              # Extracted training data
+  │   └── data*.bin        # Individual training files
+  ├── run.c                # C inference program source
+  ├── run                  # Compiled inference program
+  ├── model.py             # Model implementation
+  ├── export.py            # Model export utilities
+  ├── configurator.py      # Configuration handling
+  ├── tokenizer.py         # Tokenizer implementation
+  └── out/                 # Training outputs
+      └── model.bin        # Trained model
 ```
 
-## Performance
-
-Typical training metrics:
-- Training time: ~1 hour on T4 GPU
-- Final validation loss: ~2.5-3.0
-- Memory usage: ~2GB GPU memory
+Note: The directory structure is automatically managed by the setup function in `tinystories_modular.py`. Files are downloaded and organized as needed.
 
 ## Contributing
 
