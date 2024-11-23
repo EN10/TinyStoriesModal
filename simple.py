@@ -3,7 +3,9 @@ import os
 
 app = modal.App("tinystories-simple")
 volume = modal.Volume.from_name("tinystories-volume")
-image = modal.Image.debian_slim().pip_install("wget", "torch", "numpy", "tqdm", "pv", "requests", "sentencepiece")
+image = (modal.Image.debian_slim()
+         .pip_install("wget", "torch", "numpy", "tqdm", "pv", "requests", "sentencepiece")
+         .run_commands("apt-get update", "apt-get install -y gcc"))  # For compiling run.c
 
 # Files to download with their URLs
 FILES = {
@@ -12,7 +14,7 @@ FILES = {
     "tok105.bin": "https://huggingface.co/datasets/enio/TinyStories/resolve/main/tok105/tok105.bin",
     # Training scripts from llama2.c
     **{f: f"https://raw.githubusercontent.com/karpathy/llama2.c/master/{f}" for f in 
-       ["train.py", "model.py", "configurator.py", "export.py", "tokenizer.py", "tinystories.py"]}
+       ["train.py", "model.py", "configurator.py", "export.py", "tokenizer.py", "tinystories.py", "run.c"]}
 }
 
 @app.function(image=image, volumes={"/data": volume}, gpu="T4")
@@ -44,6 +46,25 @@ def setup():
         --always_save_checkpoint=True --eval_interval=10 --max_iters=10
     """)
 
+@app.function(image=image, volumes={"/data": volume})
+def inference(prompt="Once upon a time"):
+    os.chdir("/data")
+    
+    # Compile run.c if needed
+    if not os.path.exists("run"):
+        print("Compiling run.c...")
+        os.system("gcc -O3 -o run run.c -lm")
+    
+    # Run inference
+    print(f"\nGenerating text from prompt: {prompt}")
+    cmd = f"./run out/model.bin -z tok105.bin -t 0.8 -n 256 -i \"{prompt}\""
+    os.system(cmd)
+
 @app.local_entrypoint()
-def main():
-    setup.remote()
+def main(command="train", prompt="Once upon a time"):
+    if command == "train":
+        setup.remote()
+    elif command == "inference":
+        inference.remote(prompt)
+    else:
+        print("Invalid command. Use 'train' or 'inference'")
