@@ -32,19 +32,24 @@ The project implements a transformer-based language model that can:
 ### Core Files
 - `tinystories_modular.py` - Main implementation with modular design for training and inference
 - `tinystories_data.py` - Data downloading and preprocessing utilities
+- `tinystories_trainer_v1.py` - Alternative training implementation with more detailed logging
 - `volume_cleanup.py` - Utility for cleaning up Modal volume files
 - `transfer_model.py` - Utility for transferring models between local and Modal volume
+- `tinystories.ipynb` - Jupyter notebook for interactive training and testing
 
 ### Data Files (automatically downloaded)
-- From HuggingFace:
-  - `tok105.tar.gz` - Pre-tokenized training data
-  - `tok105.bin` - Tokenizer model
-- From llama2.c GitHub:
-  - `model.py` - Model implementation
-  - `export.py` - Model export utilities
-  - `configurator.py` - Configuration handling
-  - `tokenizer.py` - Tokenizer implementation
-  - `run.c` - C inference program (compiled automatically)
+From HuggingFace (`tok105` files):
+- `tok105.tar.gz` - Pre-tokenized training data
+- `tok105.bin` - Tokenizer model
+
+From llama2.c GitHub:
+- `train.py` - Training script
+- `model.py` - Model implementation
+- `tinystories.py` - Dataset handling
+- `tokenizer.py` - Tokenizer implementation
+- `export.py` - Model export utilities
+- `configurator.py` - Configuration handling
+- `run.c` - C inference program
 
 ### For Inference
 Required files (must exist from previous training):
