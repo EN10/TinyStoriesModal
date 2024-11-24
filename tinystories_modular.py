@@ -7,8 +7,8 @@ volume = modal.Volume.from_name("tinystories-volume")
 
 # Create image with required packages and tools
 image = (modal.Image.debian_slim()
-         .pip_install("wget", "torch", "numpy", "tqdm", "requests", "sentencepiece")  
-         .run_commands("apt-get update", "apt-get install -y pv"))
+         .pip_install("wget", "tqdm", "torch", "numpy", "requests", "sentencepiece"))
+        #  .run_commands("apt-get update", "apt-get install -y pv"))
 
 # Define files to download with their source URLs
 FILES = {
@@ -16,7 +16,7 @@ FILES = {
     **{f: f"https://huggingface.co/datasets/enio/TinyStories/resolve/main/tok105/{f}" for f in 
        ["tok105.tar.gz", "tok105.bin"]},
     **{f: f"https://raw.githubusercontent.com/karpathy/llama2.c/master/{f}" for f in 
-       ["model.py", "export.py", "configurator.py", "tokenizer.py", "tinystories.py", "run.c"]}
+       ["train.py", "model.py", "tinystories.py", "tokenizer.py", "export.py", "configurator.py", "run.c"]}
 }
 
 @app.function(image=image, volumes={"/data": volume})
