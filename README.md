@@ -1,5 +1,7 @@
 # TinyStories Language Model
 
+This repository contains an implementation of a small GPT-style language model trained on the TinyStories dataset using Modal for cloud-based training.
+
 ## Contents
 - [Overview](#overview)
 - [Features](#features)
@@ -15,8 +17,6 @@
 - [Contributing](#contributing)
 - [License](#license)
 - [Acknowledgments](#acknowledgments)
-
-This repository contains an implementation of a small GPT-style language model trained on the TinyStories dataset using Modal for cloud-based training.
 
 ## Overview
 
