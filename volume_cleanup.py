@@ -13,7 +13,9 @@ def delete_files(directory="/data"):
         "tokenizer.py",
         "tinystories.py",
         "train.py",
-        "export.py"
+        "export.py",
+        "run.c",
+        "run"
     ]
     
     files_removed = 0
