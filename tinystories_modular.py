@@ -23,10 +23,7 @@ FILES = {
 def setup_data():
     import wget
     from tqdm import tqdm
-    
-    # List current contents of data directory
-    print("Current files:", ", ".join(os.listdir("/data")))
-    
+      
     # Download any missing files with progress bar
     for file, url in FILES.items():
         if not os.path.exists(f"/data/{file}"):
