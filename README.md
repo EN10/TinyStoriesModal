@@ -2,18 +2,16 @@
 
 ## Contents
 - [Overview](#overview)
+- [Features](#features)
+- [Model Architecture & Configuration](#model-architecture-and-configuration)
 - [Files and Dependencies](#files-and-dependencies)
   - [Core Files](#core-files)
   - [Data Files](#data-files-automatically-downloaded)
   - [For Inference](#for-inference)
-- [Requirements](#requirements)
+- [Directory Structure](#directory-structure)
 - [Getting Started](#getting-started)
-- [Model Architecture](#model-architecture)
-- [Configuration](#configuration)
-- [Features](#features)
 - [Example Usage](#example-usage)
 - [Command Line Options](#command-line-options)
-- [Directory Structure](#directory-structure)
 - [Contributing](#contributing)
 - [License](#license)
 - [Acknowledgments](#acknowledgments)
@@ -26,6 +24,29 @@ The project implements a transformer-based language model that can:
 - Train on the TinyStories dataset (a collection of simple stories)
 - Generate new text in a similar style
 - Run efficiently in the cloud using Modal's GPU infrastructure
+
+## Model Architecture & Configuration
+
+The model is a small GPT-style transformer with these default parameters:
+- Vocabulary size: 105 tokens
+- Embedding dimension: 128
+- Number of layers: 5
+- Number of attention heads: 8
+- Number of key/value heads: 4
+- Context length: 256 tokens
+- Batch size: 32
+- Total parameters: ~1M
+
+These parameters can be modified in the configuration:
+```python
+# Model and training parameters
+vocab_size = 105
+dim = 128
+n_layers = 5
+n_heads = 8
+n_kv_heads = 4
+batch_size = 32
+```
 
 ## Files and Dependencies
 
@@ -59,12 +80,34 @@ Required files (must exist from previous training):
 
 Note: All files are automatically managed in the Modal volume `tinystories-volume`. The setup function in `tinystories_modular.py` handles downloading and compiling all necessary files.
 
-## Requirements
+## Directory Structure
 
-- modal
-- A Modal account and token
+After running, your Modal volume will contain:
+```
+/data/
+  ├── tok105.bin            # Tokenizer model
+  ├── tok105.model          # SentencePiece tokenizer model
+  ├── tok105.vocab          # Tokenizer vocabulary
+  ├── tok105.tar.gz         # Training data archive
+  ├── tok105/              # Extracted training data
+  │   └── data*.bin        # Individual training files
+  ├── run.c                # C inference program source
+  ├── run                  # Compiled inference program
+  ├── model.py             # Model implementation
+  ├── train.py             # Training script
+  ├── tinystories.py       # Dataset handling
+  ├── export.py            # Model export utilities
+  ├── configurator.py      # Configuration handling
+  ├── tokenizer.py         # Tokenizer implementation
+  ├── train.pt             # Processed training data
+  ├── val.pt               # Processed validation data
+  ├── checkpoint.pt        # Latest training checkpoint
+  ├── model_best.pt        # Best model during training
+  └── out/                 # Training outputs
+      └── model.bin        # Trained model
+```
 
-Note: Other dependencies (torch, numpy, sentencepiece) are automatically installed in the Modal image.
+Note: The directory structure is automatically managed by the setup function in `tinystories_modular.py`. Files are downloaded and organized as needed.
 
 ## Getting Started
 
@@ -92,38 +135,6 @@ Or run inference with a custom prompt:
 ```
 modal run tinystories_modular.py --command inference --prompt "Once upon a time"
 ```
-
-## Model Architecture
-
-The model is a small GPT-style transformer with:
-- Vocabulary size: 105 tokens
-- Embedding dimension: 128
-- Number of layers: 5
-- Number of attention heads: 8
-- Context length: 256 tokens
-- Total parameters: ~1M
-
-## Configuration
-
-The model uses these default parameters:
-```python
-# Training parameters
-vocab_size = 105
-dim = 128
-n_layers = 5
-n_heads = 8
-n_kv_heads = 4
-batch_size = 32
-```
-
-## Features
-
-- **Modular Design**: Separate functions for setup, training, and inference
-- **Automatic Setup**: Downloads and prepares all required files
-- **Progress Monitoring**: Shows download and extraction progress
-- **GPU Support**: Runs on Modal's T4 GPU infrastructure
-- **Simple Interface**: Easy-to-use command line interface
-- **Efficient Training**: Uses PyTorch for optimal performance
 
 ## Example Usage
 
@@ -157,27 +168,6 @@ modal run transfer_model.py --action upload --path out/model.bin
 ### Transfer Script (transfer_model.py)
 - `--action`: Either "download" or "upload" (default: "download")
 - `--path`: Local path for model file (default: "out/model.bin")
-
-## Directory Structure
-
-After running, your Modal volume will contain:
-```
-/data/
-  ├── tok105.bin            # Tokenizer model
-  ├── tok105.tar.gz         # Training data archive
-  ├── tok105/              # Extracted training data
-  │   └── data*.bin        # Individual training files
-  ├── run.c                # C inference program source
-  ├── run                  # Compiled inference program
-  ├── model.py             # Model implementation
-  ├── export.py            # Model export utilities
-  ├── configurator.py      # Configuration handling
-  ├── tokenizer.py         # Tokenizer implementation
-  └── out/                 # Training outputs
-      └── model.bin        # Trained model
-```
-
-Note: The directory structure is automatically managed by the setup function in `tinystories_modular.py`. Files are downloaded and organized as needed.
 
 ## Contributing
 
