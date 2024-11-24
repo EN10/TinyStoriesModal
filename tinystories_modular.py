@@ -7,8 +7,8 @@ volume = modal.Volume.from_name("tinystories-volume")
 
 # Create image with required packages and tools
 image = (modal.Image.debian_slim()
-         .pip_install("wget", "tqdm", "torch", "numpy", "requests", "sentencepiece"))
-        #  .run_commands("apt-get update", "apt-get install -y pv"))
+         .pip_install("wget", "torch", "numpy", "requests", "sentencepiece")
+         .run_commands("apt-get update", "apt-get install -y pv"))
 
 # Define files to download with their source URLs
 FILES = {
@@ -22,8 +22,7 @@ FILES = {
 @app.function(image=image, volumes={"/data": volume})
 def setup_data():
     import wget
-    from tqdm import tqdm
-      
+    
     # Download any missing files with progress bar
     for file, url in FILES.items():
         if not os.path.exists(f"/data/{file}"):
