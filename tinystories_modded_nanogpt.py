@@ -6,6 +6,8 @@ import wget
 import modal
 import torch
 import sys
+import time
+from datetime import datetime
 
 # Add /data to the Python path
 sys.path.append('/data')
@@ -146,89 +148,203 @@ def setup_data():
     print("Contents of /data directory:")
     print(os.listdir('/data'))
 
-@app.function(image=image, volumes={"/data": volume}, gpu="T4")
+@app.function(image=image, volumes={"/data": volume}, gpu="T4", timeout=3600)  # Increased timeout to 1 hour
 def train():
-    import train_gpt
-    from train_gpt import GPT, Muon, distributed_data_generator
-    import torch.nn.functional as F
-    from torch.nn.attention.flex_attention import BlockMask
+    print(f"\n=== Starting training setup at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
     
+    # Check if train_gpt.py exists
+    train_gpt_path = '/data/train_gpt.py'
+    print(f"Checking for train_gpt.py at {train_gpt_path}...")
+    if os.path.exists(train_gpt_path):
+        print("train_gpt.py found.")
+    else:
+        print("ERROR: train_gpt.py not found!")
+        raise FileNotFoundError("train_gpt.py not found at expected path.")
+    
+    print("Importing required modules...")
+    try:
+        import train_gpt
+        from train_gpt import GPT, Muon, distributed_data_generator
+        import torch.nn.functional as F
+        from torch.nn.attention.flex_attention import BlockMask
+        print("Successfully imported all modules")
+    except Exception as e:
+        print(f"Error importing modules: {str(e)}")
+        raise
+    
+    print("\nChanging to /data directory...")
     os.chdir("/data")
+    print(f"Current working directory: {os.getcwd()}")
+    print(f"Contents of current directory: {os.listdir('.')}")
     
     # Initialize model and hyperparameters
-    hparams = Hyperparameters()
-    model = GPT(
-        vocab_size=hparams.vocab_size,
-        num_layers=hparams.num_layers,
-        num_heads=hparams.num_heads,
-        model_dim=hparams.model_dim,
-        max_seq_len=hparams.max_seq_len
-    ).cuda()
+    print("\nInitializing hyperparameters...")
+    try:
+        hparams = Hyperparameters()
+        print("Successfully created hyperparameters")
+        print(f"Training files path: {hparams.train_files}")
+        print(f"Validation files path: {hparams.val_files}")
+        
+        # Check if training files exist
+        print("\nChecking data files...")
+        if os.path.exists(hparams.train_files):
+            print(f"Training file exists at {hparams.train_files}")
+        else:
+            print(f"WARNING: Training file not found at {hparams.train_files}")
+        
+        if os.path.exists(hparams.val_files):
+            print(f"Validation file exists at {hparams.val_files}")
+        else:
+            print(f"WARNING: Validation file not found at {hparams.val_files}")
+    except Exception as e:
+        print(f"Error initializing hyperparameters: {str(e)}")
+        raise
+
+    print("\nInitializing model...")
+    try:
+        print("Creating GPU model with parameters:")
+        print(f"- vocab_size: {hparams.vocab_size}")
+        print(f"- num_layers: {hparams.num_layers}")
+        print(f"- num_heads: {hparams.num_heads}")
+        print(f"- model_dim: {hparams.model_dim}")
+        print(f"- max_seq_len: {hparams.max_seq_len}")
+        
+        model = GPT(
+            vocab_size=hparams.vocab_size,
+            num_layers=hparams.num_layers,
+            num_heads=hparams.num_heads,
+            model_dim=hparams.model_dim,
+            max_seq_len=hparams.max_seq_len
+        ).cuda()
+        print("Successfully created and moved model to GPU")
+        
+        # Print CUDA memory usage
+        if torch.cuda.is_available():
+            print(f"\nCUDA Memory Summary:")
+            print(f"Allocated: {torch.cuda.memory_allocated() / 1024**2:.2f} MB")
+            print(f"Cached: {torch.cuda.memory_reserved() / 1024**2:.2f} MB")
+    except Exception as e:
+        print(f"Error initializing model: {str(e)}")
+        raise
+
+    print("\nInitializing optimizer...")
+    try:
+        optimizer = Muon(model.parameters())
+        print("Successfully created optimizer")
+    except Exception as e:
+        print(f"Error initializing optimizer: {str(e)}")
+        raise
+
+    print("\nInitializing data generator...")
+    try:
+        train_gen = distributed_data_generator(
+            hparams.train_files,
+            batch_size=32,
+            rank=0,
+            world_size=1
+        )
+        print("Successfully created data generator")
+        
+        # Try to get first batch to verify data loading works
+        print("\nTesting data generator with first batch...")
+        input_seq = next(train_gen)
+        print(f"Successfully loaded first batch with shape: {input_seq.shape}")
+    except Exception as e:
+        print(f"Error with data generator: {str(e)}")
+        raise
+
+    print("\n=== Starting training loop ===")
     
-    # Initialize optimizer
-    optimizer = Muon(model.parameters())
-    
-    # Training loop
-    print("Starting training...")
-    
-    # Initialize data generator
-    train_gen = distributed_data_generator(
-        hparams.train_files,
-        batch_size=32,  # Adjust based on GPU memory
-        rank=0,
-        world_size=1
-    )
+    # Training metrics
+    start_time = time.time()
+    running_loss = 0.0
+    best_val_loss = float('inf')
     
     # Training loop
     model.train()
-    for iter_num in range(hparams.num_iterations):
-        # Get batch
-        input_seq = next(train_gen).cuda()
-        target_seq = input_seq.clone()
-        
-        # Calculate sliding window size
-        sliding_window_num_blocks = torch.tensor([4], device='cuda')  # Adjust based on sequence length
-        
-        # Forward pass
-        loss = model(input_seq, target_seq, sliding_window_num_blocks)
-        
-        # Backward pass and optimize
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        
-        # Log progress
-        if iter_num % 10 == 0:
-            print(f"iter {iter_num}: loss {loss.item():.4f}")
-        
-        # Validation
-        if iter_num % hparams.val_loss_every == 0:
-            model.eval()
-            with torch.no_grad():
-                val_gen = distributed_data_generator(
-                    hparams.val_files,
-                    batch_size=1,
-                    rank=0,
-                    world_size=1
-                )
-                val_loss = 0
-                for _ in range(5):  # Average over 5 validation batches
-                    val_seq = next(val_gen).cuda()
-                    val_loss += model(val_seq, val_seq, sliding_window_num_blocks).item()
-                val_loss /= 5
-                print(f"Validation loss: {val_loss:.4f}")
-            model.train()
-        
-        # Save checkpoint
-        if hparams.save_checkpoint and iter_num % 100 == 0:
-            checkpoint = {
-                'model': model.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'iter_num': iter_num,
-            }
-            torch.save(checkpoint, "checkpoint.pt")
+    try:
+        for iter_num in range(hparams.num_iterations):
+            batch_start_time = time.time()
+            
+            # Get batch
+            print(f"\nIteration {iter_num + 1}/{hparams.num_iterations}")
+            print("Loading batch...", end=" ")
+            input_seq = next(train_gen).cuda()
+            target_seq = input_seq.clone()
+            print(f"Batch shape: {input_seq.shape}")
+            
+            # Calculate sliding window size
+            sliding_window_num_blocks = torch.tensor([4], device='cuda')
+            
+            # Forward pass
+            print("Forward pass...", end=" ")
+            loss = model(input_seq, target_seq, sliding_window_num_blocks)
+            running_loss += loss.item()
+            
+            # Backward pass and optimize
+            print("Backward pass...", end=" ")
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            
+            batch_time = time.time() - batch_start_time
+            
+            # Log progress
+            if iter_num % 10 == 0:
+                avg_loss = running_loss / (iter_num + 1)
+                elapsed_time = time.time() - start_time
+                print(f"\nStats:")
+                print(f"- Iteration: {iter_num}/{hparams.num_iterations}")
+                print(f"- Loss: {loss.item():.4f}")
+                print(f"- Average loss: {avg_loss:.4f}")
+                print(f"- Batch time: {batch_time:.2f}s")
+                print(f"- Total training time: {elapsed_time:.2f}s")
+            
+            # Validation
+            if iter_num % hparams.val_loss_every == 0:
+                print("\nRunning validation...")
+                model.eval()
+                with torch.no_grad():
+                    val_gen = distributed_data_generator(
+                        hparams.val_files,
+                        batch_size=1,
+                        rank=0,
+                        world_size=1
+                    )
+                    val_loss = 0
+                    for val_batch in range(5):
+                        print(f"Validation batch {val_batch + 1}/5...", end=" ")
+                        val_seq = next(val_gen).cuda()
+                        val_loss += model(val_seq, val_seq, sliding_window_num_blocks).item()
+                    val_loss /= 5
+                    print(f"\nValidation loss: {val_loss:.4f}")
+                    
+                    if val_loss < best_val_loss:
+                        best_val_loss = val_loss
+                        print(f"New best validation loss: {best_val_loss:.4f}")
+                model.train()
+            
+            # Save checkpoint
+            if hparams.save_checkpoint and iter_num % 100 == 0:
+                print("\nSaving checkpoint...")
+                checkpoint = {
+                    'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'iter_num': iter_num,
+                    'best_val_loss': best_val_loss,
+                    'training_time': time.time() - start_time
+                }
+                torch.save(checkpoint, "checkpoint.pt")
+                print("Checkpoint saved successfully")
     
-    print("Training completed!")
+        total_time = time.time() - start_time
+        print(f"\n=== Training completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
+        print(f"Total training time: {total_time:.2f} seconds")
+        print(f"Final loss: {loss.item():.4f}")
+        print(f"Best validation loss: {best_val_loss:.4f}")
+    except Exception as e:
+        print(f"Error during training: {str(e)}")
+        raise
 
 @app.function(image=image, volumes={"/data": volume}, gpu="T4")
 def inference(prompt="Once upon a time", max_tokens=100):
