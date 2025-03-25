@@ -1,5 +1,6 @@
 import modal
 import os
+import wget
 
 # Initialize Modal app and volume
 app = modal.App("tinystories-simple")
@@ -7,7 +8,7 @@ volume = modal.Volume.from_name("tinystories-volume")
 
 # Create image with required packages and tools
 image = (modal.Image.debian_slim()
-         .pip_install("wget", "torch", "numpy", "requests", "sentencepiece")
+         .pip_install("wget", "torch", "numpy", "requests", "sentencepiece", "tqdm")
          .run_commands("apt-get update", "apt-get install -y pv"))
 
 # Define files to download with their source URLs
@@ -21,7 +22,6 @@ FILES = {
 
 @app.function(image=image, volumes={"/data": volume})
 def setup_data():
-    import wget
     
     # Download any missing files with progress bar
     for file, url in FILES.items():
@@ -46,9 +46,8 @@ def train():
     train_cmd = """
     python train.py --vocab_source=custom --vocab_size=105 --compile=False \
       --dim=128 --n_layers=5 --n_heads=8 --n_kv_heads=4 --batch_size=32 \
-      --always_save_checkpoint=True --eval_interval=1 --max_iters=1
+      --always_save_checkpoint=True --eval_interval=100 --max_iters=500 --init_from='resume'
     """
-    
     # Run initial training
     print("\nStarting training...")
     os.chdir("/data")  # Ensure we're in the right directory
